@@ -2,16 +2,14 @@
 
 import numpy as np
 from matplotlib import animation
-from matplotlib.dates import date2num
 from matplotlib import rc
 import matplotlib.pyplot as plt
-import matplotlib 
 
 def cart2sph(x, y, z):
     hxy = np.hypot(x, y)
     r = np.hypot(hxy, z)
     phi = np.arctan2(y, x)
-    theta = np.arctan2(z, hxy)
+    theta = np.arctan2(hxy,z)
     return np.array([r,theta,phi])
 
 def sph2cart(r,theta,phi):
@@ -35,27 +33,35 @@ def update_vis(i,self):
     hit = self.hit
 
     theta,phi = np.random.random((batch,2)).T
-    theta = self.theta_min + (self.theta_max - self.theta_min)*theta
+    theta = np.arccos(1 - 2*theta)
+    
     phi   = self.phi_min + (self.phi_max - self.phi_min)*phi
     
     for (t,p) in zip(theta,phi):
         d = self.__class__.arclen(t,p,polar[1],polar[2], self.shell_radius)
         if (d < self.point_radius).any():
             hit += 1
-            XYZ = sph2cart(self.shell_radius,t,p)
-            x,y = self.__class__.cart_project_onto_disc(np.atleast_2d(XYZ))
+            if self.verbose:
+                XYZ = sph2cart(self.shell_radius,t,p)
+                self.hitout.write("H {:8.3f} {:8.3f} {:8.3f}\n".format(*XYZ))
+                x,y = self.__class__.cart_project_onto_disc(
+                    np.atleast_2d(XYZ), self.visual_2d_clip)
             self.hitx_data.extend(x)
             self.hity_data.extend(y)
         else:
             XYZ = sph2cart(self.shell_radius,t,p)
-            x,y = self.__class__.cart_project_onto_disc(np.atleast_2d(XYZ))
+            if self.verbose:
+                x,y = self.__class__.cart_project_onto_disc(
+                    np.atleast_2d(XYZ), self.visual_2d_clip)
+                self.missout.write("H {:8.3f} {:8.3f} {:8.3f}\n".format(*XYZ))
             self.missx_data.extend(x)
             self.missy_data.extend(y)
+    self.hitout.flush()
+    self.missout.flush()
         
     self.vis_hit.set_data(self.hitx_data, self.hity_data)
     self.vis_miss.set_data(self.missx_data, self.missy_data)
-    #x,y = self.cart_project_onto_disc(self.crd)
-    #self.vis_data.set_data(x,y) 
+
     self.ax.set_xlim(
         min(self.hitx_data + self.missx_data),
         max(self.hitx_data + self.missx_data)
@@ -64,26 +70,30 @@ def update_vis(i,self):
         min(self.hity_data + self.missy_data),
         max(self.hity_data + self.missy_data)
         )
+
     N += batch
     outstr = "r={:8.2f} {:12.8f} N={:d} hit%={:10.6e} iter={:8d}/{:8d}\n"
-    print(outstr.format(
-            self.shell_radius,
-            hit/N * 4*np.pi*self.shell_radius,
-            N,
-            hit/N,
-            i,
-            iterations), 
-        end='')
+    if not self.quiet:
+        print(outstr.format(
+                self.shell_radius,
+                hit/N * 4*np.pi*self.shell_radius,
+                N,
+                hit/N,
+                i,
+                iterations), 
+            end='')
     self.N = N
     self.hit = hit
-    return [self.vis_hit, self.vis_miss]#,self.vis_data]
+    return [self.vis_hit, self.vis_miss]
     
 class SphereSAPopulation:
     def __init__(self, crd, **kwargs):
         """
         """
         self.visual=False
-        self.batch_size = 10000
+        self.visual_2d_clip=10.0
+        self.quiet=True
+        self.batch_size = 1
         self.iterations=10000
         self.crd = crd
         self.theta_min = 0
@@ -98,13 +108,14 @@ class SphereSAPopulation:
         for k,v in kwargs.items():
             if v is not None:
                 self.__dict__[k] = v
-        print(self.__dict__)
+        if not self.quiet:
+            print(self.__dict__)
 
     @staticmethod
     def arclen(t, p, data_theta, data_phi, r):
         central_angle = np.arccos(
-            np.sin(data_theta)*np.sin(t) +
-            np.cos(data_theta)*np.cos(t)*np.cos(p - data_phi))
+            np.cos(data_theta)*np.cos(t) +
+            np.sin(data_theta)*np.sin(t)*np.cos(abs(p - data_phi)))
         d = r * central_angle
         return d
 
@@ -123,7 +134,7 @@ class SphereSAPopulation:
 
         while i < iterations:
             theta,phi = np.random.random((batch,2)).T
-            theta = self.theta_min + (self.theta_max - self.theta_min)*theta
+            theta = np.arccos(1 - 2*theta)
             phi   = self.phi_min + (self.phi_max - self.phi_min)*phi
 
             for (t,p) in zip(theta,phi): 
@@ -134,22 +145,32 @@ class SphereSAPopulation:
             N += batch
             i += 1
             outstr = "r={:8.2f} {:12.8f} N={:d} hit%={:10.6e} iter={:8d}/{:8d}\n"
-            print(outstr.format(
-                    self.shell_radius,
-                    hit/N * 4*np.pi*self.shell_radius,
-                    N,
-                    hit/N,
-                    i,
-                    iterations), 
-                end='')
+            if not self.quiet:
+                print(outstr.format(
+                        self.shell_radius,
+                        hit/N * 4*np.pi*self.shell_radius,
+                        N,
+                        hit/N,
+                        i,
+                        iterations), 
+                    end='')
+        print(outstr.format(
+                self.shell_radius,
+                hit/N * 4*np.pi*self.shell_radius,
+                N,
+                hit/N,
+                i,
+                iterations), 
+            end='')
+
 
     @staticmethod
-    def cart_project_onto_disc(crd):
+    def cart_project_onto_disc(crd, clip=10.0):
         x = crd[:,0] / (1-crd[:,2])
         y = crd[:,1] / (1-crd[:,2])
 
         mag = np.sqrt((x**2 + y**2))
-        maxmag = 3.0
+        maxmag = clip
         mask = mag > maxmag
         x[mask] = x[mask] / mag[mask] * maxmag
         y[mask] = y[mask] / mag[mask] * maxmag
@@ -166,11 +187,15 @@ class SphereSAPopulation:
         self.missy_data = []
         self.hitx_data = []
         self.hity_data = []
+        if self.verbose:
+            self.hitout = open('hit.xyz','w')
+            self.missout = open('miss.xyz','w')
         self.vis_miss = self.ax.plot([], [], 'r.', ms=1)[0]
         # self.vis_miss = self.ax.scatter([0], [0], ',', ms=1, c='r')[0]
         self.vis_hit = self.ax.plot([], [], 'g.', ms=5)[0]
-        x,y = self.cart_project_onto_disc(self.crd)
-        self.vis_data = self.ax.plot(x,y, 'k,', ms=.1,alpha=.5)[0]
+        #self.crd /= np.atleast_2d(np.linalg.norm(self.crd,axis=1)*self.shell_radius).T
+        x,y = self.cart_project_onto_disc(self.crd, self.visual_2d_clip)
+        self.vis_data = self.ax.plot(x,y, 'k,', ms=1.0,alpha=.5)[0]
         #ax.set_ylim(-20, 20)
         self.polar = cart2sph(*self.crd.T)
         self.hit = 0
@@ -180,7 +205,12 @@ class SphereSAPopulation:
                 update_vis, fargs=(self,),
             interval=update, blit=False, frames=self.iterations, repeat=False)
         plt.show()
+        if not self.quiet:
+            print("Press any key to abort")
         input()
+        if self.verbose:
+            self.hitout.close()
+            self.missout.close()
 
 
 def main():
@@ -193,15 +223,18 @@ def main():
         nargs='+',
         help='input filename containing coordinates'
     )
-    parser.add_argument('--theta-min', type=float)
-    parser.add_argument('--theta-max', type=float)
-    parser.add_argument('--phi-min', type=float)
-    parser.add_argument('--phi-max', type=float)
+    #parser.add_argument('--theta-min', type=float)
+    #parser.add_argument('--theta-max', type=float)
+    #parser.add_argument('--phi-min', type=float)
+    #parser.add_argument('--phi-max', type=float)
     parser.add_argument('--point-radius', type=float)
     parser.add_argument('--shell-radius', type=float)
     parser.add_argument('--iterations', type=int)
     parser.add_argument('--batch-size', type=int)
     parser.add_argument('--visual', action="store_true")
+    parser.add_argument('--quiet', action="store_true")
+    parser.add_argument('--verbose', action="store_true")
+    parser.add_argument('--visual-2d-clamp', type=float)
     args = parser.parse_args()
 
     crd = read_coordinates(args.filename)
