@@ -8,8 +8,9 @@ from scipy.spatial.distance import cdist
 
 name = sys.argv[1]
 startidx=int(sys.argv[2])
-rlist = np.array([float(sys.argv[3])])
+rfit = float(sys.argv[3])
 infile = sys.argv[4]
+#startidx = 0
 
 print("Loading data file", name)
 # dat = Grid("pot.dx")
@@ -51,11 +52,12 @@ origin = np.array([dat.midpoints[i].mean() for i in range(len(dat.midpoints))])
 print("origin", origin)
 minz = np.min(dat.edges[2])  # - origin[2]
 maxz = np.max(dat.edges[2])  # - origin[2]
-minz = 75-(38.398/2)
-maxz = 75+(38.398/2)
+# minz = 75-(38.398)
+# maxz = 75+(38.398)
 height = maxz - minz
 rmax = np.max(dat.edges[0])  # - origin[0]
-dz = 5.0
+rlist = np.arange(0.5, rmax, 0.5, dtype=np.float32)
+dz = 1
 
 cutoff = 4.0
 rmin=0.5
@@ -65,7 +67,7 @@ print("rmin:", rmin)
 print("rmax:", rmax)
 print("cutoff for ESP fit:", cutoff)
 
-print("running index", startidx, "r=", rlist)
+print("running index", startidx, "r=", rfit)
 
 # grid sizes
 dtheta = 10. / 360
@@ -84,6 +86,169 @@ print("total comparisons is",theta.shape[0]*z.shape[0]*np.prod(dat.grid.shape))
 #         rlist = rlist[::-1]
 #     startidx=1
 # else:
+
+def resp2d(grid_xy, grid_v, surface_xy,cutoff=12.0):
+    """
+    Following Bayly's RESP 1993 paper
+    Current does not actually using any restraints, so it is just an ESP fit
+    """
+    from scipy.spatial.distance import cdist
+
+    import time
+
+    # breakpoint()
+    K = len(grid_xy)
+    N = len(surface_xy)
+    print("resp shapes: K,N", K, N)
+
+    A = np.zeros((K, N), dtype=np.float32)
+    B = np.zeros((K, 1), dtype=np.float32)
+
+    for j, pt_j in enumerate(grid_xy):
+
+        # now = time.clock()
+        rij = cdist(grid_xy, [pt_j]).flatten()
+        # now = time.clock() - now
+        # print("elapsed:",now*1000)
+        mask = np.logical_and(rij > 0.0, rij < cutoff)
+        if j % 1000 == 0:
+            print(j,len(grid_xy), mask.sum(), len(mask))
+        rij = rij[mask]
+        B[j] = np.sum(grid_v[mask] / rij)
+        for k, pt_k in enumerate(surface_xy):
+            # print("   ",j,len(grid_xyz),k,len(surface_xyz))
+            if j == k:
+                A[j][j] = np.sum(1.0/rij**2.0)
+            else:
+                rik = cdist(grid_xy, [pt_k]).flatten()
+                mask2 = rik[mask] > 0.0
+                A[j][k] = np.sum(1.0/(rij[mask2] * rik[mask][mask2]))
+    
+    fit_charges = np.linalg.lstsq(A, B, rcond=None)[0]
+
+    chi2 = 0.0
+    for i in range(K):
+        rij = cdist(surface_xy, [grid_xy[i]])
+        mask = rij > 0.0
+        vi = np.sum(fit_charges[mask] / rij[mask])
+        chi2 += (grid_v[i] - vi)**2
+        
+    # vhat = grid_v - np.array([fit_charges / cdist(surface_xyz, [grid_xyz[i]]) for i in range(K)])
+    # chi2 = np.sum(vhat**2)
+    rrms = (chi2 / (grid_v**2).sum())**.5
+    print("RRMS RESP FIT:", rrms)
+
+    return fit_charges
+def resp(grid_xyz, grid_v, surface_xyz,cutoff=12.0):
+    """
+    Following Bayly's RESP 1993 paper
+    Current does not actually using any restraints, so it is just an ESP fit
+    """
+    from scipy.spatial.distance import cdist
+
+    import time
+
+    # breakpoint()
+    K = len(grid_xyz)
+    N = len(surface_xyz)
+    print("resp shapes: K,N", K, N)
+
+    A = np.zeros((K, N), dtype=np.float32)
+    B = np.zeros((K, 1), dtype=np.float32)
+
+    for j, pt_j in enumerate(grid_xyz):
+
+        # now = time.clock()
+        rij = cdist(grid_xyz, [pt_j]).flatten()
+        # now = time.clock() - now
+        # print("elapsed:",now*1000)
+        mask = np.logical_and(rij > 0.0, rij < cutoff)
+        if j % 1 == 0:
+            print(j,len(grid_xyz), mask.sum(), len(mask))
+        rij = rij[mask]
+        B[j] = np.sum(grid_v[mask] / rij)
+        for k, pt_k in enumerate(surface_xyz):
+            # print("   ",j,len(grid_xyz),k,len(surface_xyz))
+            if j == k:
+                A[j][j] = np.sum(1.0/rij**2.0)
+            else:
+                rik = cdist(grid_xyz, [pt_k]).flatten()
+                A[j][k] = np.sum(1.0/(rij * rik[mask]))
+    
+    fit_charges = np.linalg.lstsq(A, B, rcond=None)[0]
+
+    chi2 = 0.0
+    for i in range(K):
+        rij = cdist(surface_xyz, [grid_xyz[i]])
+        vi = np.sum(fit_charges / rij)
+        chi2 += (grid_v[i] - vi)**2
+        
+    # vhat = grid_v - np.array([fit_charges / cdist(surface_xyz, [grid_xyz[i]]) for i in range(K)])
+    # chi2 = np.sum(vhat**2)
+    rrms = (chi2 / (grid_v**2).sum())**.5
+    print("RRMS RESP FIT:", rrms)
+
+    return fit_charges
+
+def interpolate_circle(grid, z, r, o, N):
+    """
+    o is the origin
+    N is the number of points on the circle to generate
+    returns an array of N values, corresponding the the grid at that circle 
+    """
+    theta = np.linspace(0, np.pi*2, N)
+    x = r * np.cos(theta) + o[0]
+    y = r * np.sin(theta) + o[1]
+    zcrd = np.repeat(z, N)
+    xyz = np.vstack((x, y, zcrd))
+    vals = grid.interpolated(*xyz)
+    return vals
+    
+print("# Nr = ",len(rlist), "Nz=", len(z))
+print("Total is", len(rlist)*len(z))
+out_str = "DATA {:8d} r={:12.4f} z={:12.4f} v={:16.8f} std={:16.8f} N={:12d}"
+xyv = np.zeros((len(rlist)*len(z), 3), dtype=np.float32)
+print("Grid calculation...")
+for i, r in enumerate(rlist,0):
+    for j,zi in enumerate(z):
+        N = max(360, int(round(4*r*np.pi,0)))
+        vpot = interpolate_circle(dat, zi, r, origin, N)
+        # print(i,j,i*len(rlist)+j)
+        xyv[i*len(z)+j][0] = r
+        xyv[i*len(z)+j][1] = zi
+        xyv[i*len(z)+j][2] = vpot.mean()
+        #print(out_str.format(i, r, zi, vpot.mean(), vpot.std(), N))
+
+fit = True
+if fit:
+    print("xyv is shape", xyv.shape)
+
+    r = rfit
+    i = startidx
+    print("{:10d} RESP FIT FOR R={:10.4f}".format(i,rfit))
+    # R, Z = np.meshgrid(np.repeat(40.0, len(z)), z)
+    # surface = np.array([list(rz) for rz in zip(R.flat, Z.flat)])
+    surface = np.vstack((np.repeat(rfit, len(z)), z)).T
+    # surface = np.array([list(rz) for rz in zip(R.flat, Z.flat)])
+    # print("surface shape is", surface.shape)
+    # surface = np.hstack((surface,np.zeros((surface.shape[0], 1))))
+    # print("surface shape is", surface.shape)
+    xyz = np.hstack((xyv[:,:2],np.zeros((len(rlist)*len(z), 1))))
+    # print("xyz shape is", xyz.shape)
+    # print("vpot shape is", xyv[:,2].shape)
+    q = resp2d(xyv[:,:2], xyv[:,2], surface, cutoff=999999)
+    # print("q shape", q.shape)
+    with open('resp.{:05d}.dat'.format(i), 'w') as fid:
+        fid.write("# r={:10.6f}\n".format(rfit))
+        for xy,qi in zip(surface, q):
+            for crd in xy:
+                fid.write("{:12.8f} ".format(crd))
+            for qq in qi:
+                fid.write("{:12.8f} ".format(qq))
+            fid.write("\n")
+
+quit() 
+
 
 
 # fig = plt.figure(figsize=(10, 5),dpi=100)
@@ -197,57 +362,6 @@ sheath_r = []
 
 #    return np.array(fit_charges.cpu())
 
-def resp(grid_xyz, grid_v, surface_xyz,cutoff=12.0):
-
-    """
-    Following Bayly's RESP 1993 paper
-    Current does not actually using any restraints, so it is just an ESP fit
-    """
-    from scipy.spatial.distance import cdist
-
-    import time
-
-    # breakpoint()
-    K = len(grid_xyz)
-    N = len(surface_xyz)
-    print("resp shapes: K,N", K, N)
-
-    A = np.zeros((K, N), dtype=np.float32)
-    B = np.zeros((K, 1), dtype=np.float32)
-
-    for j, pt_j in enumerate(grid_xyz):
-
-        # now = time.clock()
-        rij = cdist(grid_xyz, [pt_j]).flatten()
-        # now = time.clock() - now
-        # print("elapsed:",now*1000)
-        mask = np.logical_and(rij > 0.0, rij < cutoff)
-        if j % 1000 == 0:
-            print(j,len(grid_xyz), mask.sum(), len(mask))
-        rij = rij[mask]
-        B[j] = np.sum(grid_v[mask] / rij)
-        for k, pt_k in enumerate(surface_xyz):
-            # print("   ",j,len(grid_xyz),k,len(surface_xyz))
-            if j == k:
-                A[j][j] = np.sum(1.0/rij**2.0)
-            else:
-                rik = cdist(grid_xyz, [pt_k]).flatten()
-                A[j][k] = np.sum(1.0/(rij * rik[mask]))
-    
-    fit_charges = np.linalg.lstsq(A, B, rcond=None)[0]
-
-    chi2 = 0.0
-    for i in range(K):
-        rij = cdist(surface_xyz, [grid_xyz[i]])
-        vi = np.sum(fit_charges / rij)
-        chi2 += (grid_v[i] - vi)**2
-        
-    # vhat = grid_v - np.array([fit_charges / cdist(surface_xyz, [grid_xyz[i]]) for i in range(K)])
-    # chi2 = np.sum(vhat**2)
-    rrms = (chi2 / (grid_v**2).sum())**.5
-    print("RRMS RESP FIT:", rrms)
-
-    return fit_charges
 
 def pdbatom_factory():
     """
