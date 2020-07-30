@@ -193,3 +193,6 @@ def main():
     # parm_fnm = "top.noh.pdb"
     # traj_fnm = "traj.noh.pdb"
     # lig_fnm  = "lig2h.am1.pdbqt"
+
+if __name__ == "__main__":
+    main()
