@@ -102,14 +102,14 @@ def run_single(i, c, parm_fnm, traj_fnm, lig_fnm, center, size, n_confs=20, name
     to_pdbqt(pdb_fnm, pdbqt_fnm, rigid=True)
 
     dockout = "\rDocking center {:d} {:8.6} {:8.6} {:8.6}, frame {:7d}/{:-8d}"
-    print(dockout.format(c, *center,i, i), end="")
+    print(dockout.format(name, *center,i, i), end="")
     #print("\r{:80s}".format(""), end='')
     log_fnm = pdb_fnm.rsplit('.', 1)[0]+'.{:s}.{:s}.log'.format(name, lig_name)
     dock_structure(pdbqt_fnm, lig_fnm, center, size, log=log_fnm, n_confs=n_confs)
 
     out_fnm = pdb_fnm.rsplit('.', 1)[0]+'.{:s}.{:s}.pdbqt'.format(name, lig_name)
     out_as_pdb_fnm = pdb_fnm.rsplit('.', 1)[0] \
-        +'.c{:d}.{:s}.pdb'.format(c, lig_name)
+        +'.{:s}.{:s}.pdb'.format(name, lig_name)
     to_pdb(out_fnm, out_as_pdb_fnm)
 
 
