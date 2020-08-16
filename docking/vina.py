@@ -69,7 +69,7 @@ def dock_structure(prot_fnm, lig_fnm, center, size, log=None, n_confs=1):
     size_y = {7:f}
     size_z = {8:f}
 
-    exhaustiveness = 8
+    exhaustiveness = 80
     num_modes = {10:d}
 
     energy_range = 100
@@ -81,14 +81,12 @@ def dock_structure(prot_fnm, lig_fnm, center, size, log=None, n_confs=1):
     out = log.rsplit('.',1)[0] + '.pdbqt'
     inp = config.format(prot_fnm, lig_fnm, log, *center, *size, out, n_confs)
     
-
-    #breakpoint()
     call(vina, input=inp)
     
     print("Wrote", out, log)
 
 
-def run_single(i, c, parm_fnm, traj_fnm, lig_fnm, center, size, n_confs=20, name="site"):
+def run_single(i, c, parm_fnm, traj_fnm, lig_fnm, center, size, n_confs=20, name="site", force=True):
 
     lig_name = lig_fnm.rsplit('.',1)[0]
     
@@ -101,10 +99,20 @@ def run_single(i, c, parm_fnm, traj_fnm, lig_fnm, center, size, n_confs=20, name
     print("\rConverting frame {:7d}/{:-8d}".format(i, i), end="")
     to_pdbqt(pdb_fnm, pdbqt_fnm, rigid=True)
 
-    dockout = "\rDocking center {:d} {:8.6} {:8.6} {:8.6}, frame {:7d}/{:-8d}"
+    dockout = "\rDocking center name {:s} {:8.6} {:8.6} {:8.6}, frame {:7d}/{:-8d}"
     print(dockout.format(name, *center,i, i), end="")
     #print("\r{:80s}".format(""), end='')
     log_fnm = pdb_fnm.rsplit('.', 1)[0]+'.{:s}.{:s}.log'.format(name, lig_name)
+
+    if not force and os.path.exists(log_fnm):
+        with open(log_fnm) as fd:
+            lines = sum([1 for line in fd])
+
+        # without confs, there are 26 lines of input in the log
+        if lines == 26 + n_confs:
+            print("Output indicates docking already done. Skipping")
+            return
+
     dock_structure(pdbqt_fnm, lig_fnm, center, size, log=log_fnm, n_confs=n_confs)
 
     out_fnm = pdb_fnm.rsplit('.', 1)[0]+'.{:s}.{:s}.pdbqt'.format(name, lig_name)
@@ -172,6 +180,9 @@ def main():
     parser.add_argument("-f", "--frame", type=int,
         help="Frame to extract from trajectory (1-index)")
 
+    parser.add_argument("--force", action="store_true",
+        help="Perform the dock even if the log file exists and looks complete")
+
     args = parser.parse_args()
 
     parm = args.params
@@ -180,7 +191,15 @@ def main():
     center = [args.center_x, args.center_y, args.center_z]
     lens = [args.length_x, args.length_y, args.length_z]
 
-    run_single(args.frame, args.frame, parm, traj, lig, center, lens, name=args.site_name)
+    run_single(args.frame,
+         args.frame,
+         parm,
+         traj,
+         lig,
+         center,
+         lens,
+         name=args.site_name,
+         force=args.force)
 
 if __name__ == "__main__":
     main()
