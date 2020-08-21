@@ -4,6 +4,7 @@ from gridData import Grid
 import matplotlib.pyplot as plt
 import sys
 from scipy.spatial.distance import cdist
+import json
 
 
 name = sys.argv[1]
@@ -206,20 +207,55 @@ def interpolate_circle(grid, z, r, o, N):
     
 print("# Nr = ",len(rlist), "Nz=", len(z))
 print("Total is", len(rlist)*len(z))
-out_str = "DATA {:8d} r={:12.4f} z={:12.4f} v={:16.8f} std={:16.8f} N={:12d}"
+out_str = "{:8d} {:12.4f} {:12.4f} {:16.8f} {:16.8f} {:12d}"
+
+# this is the 2d rep, with dims N_r x N_z
+# so this has a pretty pathological cutoff at the edges
+# we consider the entire z range, and then clip to 
+# inner 1-2 discs, which should appear periodic
+
 xyv = np.zeros((len(rlist)*len(z), 3), dtype=np.float32)
 print("Grid calculation...")
+zrgrid = []
 for i, r in enumerate(rlist,0):
-    for j,zi in enumerate(z):
-        N = max(360, int(round(4*r*np.pi,0)))
-        vpot = interpolate_circle(dat, zi, r, origin, N)
-        # print(i,j,i*len(rlist)+j)
-        xyv[i*len(z)+j][0] = r
-        xyv[i*len(z)+j][1] = zi
-        xyv[i*len(z)+j][2] = vpot.mean()
-        #print(out_str.format(i, r, zi, vpot.mean(), vpot.std(), N))
+    # with open('zr.{:05d}.{:05d}.dat'.format(startidx,i), 'w') as fid:
+        # fid.write("# {:6s} {:12s} {:12s} {:16s} {:16s} {:12s}\n".format("step", "radius", "z", "vpot_mean", "vpot_std", "N_deg_pts"))
+        zarray = []
+        for j,zi in enumerate(z):
+            N = max(360, int(round(4*r*np.pi,0)))
 
-fit = True
+            # calculate the average vpot of the ring a z,r
+            vpot = interpolate_circle(dat, zi, r, origin, N)
+            # print(i,j,i*len(rlist)+j)
+
+
+            xyv[i*len(z)+j][0] = r
+            xyv[i*len(z)+j][1] = zi
+            xyv[i*len(z)+j][2] = vpot.mean()
+            #fid.write(out_str.format(i, r, zi, vpot.mean(), vpot.std(), N) + '\n')
+            zarray.append(vpot.mean())
+        zrgrid.append(zarray)
+            #print(out_str.format(i, r, zi, vpot.mean(), vpot.std(), N))
+
+header = {
+    "rmin": str(min(rlist)),
+    "rmax": str(max(rlist)),
+    "zmin": str(min(z)),
+    "zmax": str(max(z)),
+    "vmin": str(float(np.min(zrgrid))),
+    "vmax": str(float(np.max(zrgrid)))
+}
+with open('{:s}.zrgrid.dat'.format(name), 'w') as fid:
+    fid.write('#json {:s}\n'.format(json.dumps(header)))
+    for row in zrgrid:
+        for elem in row:
+            fid.write("{:12.6f} ".format(elem))
+        fid.write("\n")
+
+del header
+
+out_str = "DATA {:8d} r={:12.4f} z={:12.4f} v={:16.8f} std={:16.8f} N={:12d}"
+fit = False
 if fit:
     print("xyv is shape", xyv.shape)
 
